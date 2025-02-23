@@ -1,30 +1,22 @@
-local LrDialogs = import 'LrDialogs'
-local LrTasks = import 'LrTasks'
-local LrApplication = import 'LrApplication'
-local LrFileUtils = import 'LrFileUtils'
-local LrPathUtils = import 'LrPathUtils'
-local LrStringUtils = import 'LrStringUtils'
-local json = require 'json'
-local TaggingService = require 'TaggingService'
+local LrDialogs       = import("LrDialogs")
+local LrTasks         = import("LrTasks")
+local LrApplication   = import("LrApplication")
+local LrFileUtils     = import("LrFileUtils")
+local LrPathUtils     = import("LrPathUtils")
+local LrStringUtils   = import("LrStringUtils")
+local json            = require("json")
+local TaggingService  = require("TaggingService")
 
--- Removes all tags that start with "lds_"
-local function removeLdsTags(keywordString)
-    if not keywordString or keywordString == "" then
-        return ""
-    end
-
-    -- Split the comma-separated string
-    local remainingTags = {}
-    for tag in string.gmatch(keywordString, "([^,]+)") do
-        local trimmed = LrStringUtils.trimWhitespace(tag)
-        -- Keep the tag if it does NOT start with "lds_"
-        if not string.find(trimmed, "^lds_") then
-            table.insert(remainingTags, trimmed)
+-- Helper: manually find or create a keyword by name
+local function getOrCreateKeyword(catalog, name)
+    -- search all existing keywords
+    for _, kw in ipairs(catalog:getKeywords()) do
+        if kw:getName() == name then
+            return kw
         end
     end
-
-    -- Rebuild a comma-separated string
-    return table.concat(remainingTags, ", ")
+    -- not found, so create
+    return catalog:createKeyword(name, {}, false, nil)
 end
 
 local function runBatchTagging()
@@ -57,7 +49,7 @@ local function runBatchTagging()
             -- Convert photoPaths (Lua table) to JSON string
             local jsonString = json.encode(photoPaths)
 
-            -- Write the JSON string to a temp file
+            -- Write the JSON string to a temp file (using standard Lua I/O)
             local file = io.open(jsonFile, "w")
             if file then
                 file:write(jsonString)
@@ -69,54 +61,50 @@ local function runBatchTagging()
 
             -- 3) Call the TaggingService to process the single JSON file
             local results = TaggingService.getTagsForImages(jsonFile)
-
             if not results or #results == 0 then
                 LrDialogs.message("No results returned", "Check the Python script for errors.", "warning")
                 return
             end
 
-            -- 4) Write tags back to each photo in a single write operation
-            catalog:withWriteAccessDo("Apply AI Tags in Bulk", function()
-                -- 'results' is an array of { image_path = "...", tags = { {tag, score}, ... } }
-                local pathToPhoto = {}
-                for _, photo in ipairs(selectedPhotos) do
-                    local p = photo:getRawMetadata("path")
-                    pathToPhoto[p] = photo
-                end
+            -- Map file paths to Lightroom photo objects for quick lookup
+            local pathToPhoto = {}
+            for _, photo in ipairs(selectedPhotos) do
+                local p = photo:getRawMetadata("path")
+                pathToPhoto[p] = photo
+            end
 
-                for _, entry in ipairs(results) do
-                    local p = entry.image_path
-                    local photo = pathToPhoto[p]
-                    if photo and entry.tags then
-                        -- 1) Remove existing lds_ tags
-                        local existing = photo:getFormattedMetadata("keywordTags") or ""
-                        local existingWithoutLds = removeLdsTags(existing)
-
-                        -- 2) Build new keywords from existing (without lds_)
-                        local newKeywords = existingWithoutLds
-                        for _, tagData in ipairs(entry.tags) do
-                            local tagName = tagData[1]
-                            local confidence = tagData[2]
-                            if confidence > 0.21 then
-                                -- Prepend the "lds_" prefix
-                                local prefixedTagName = "lds_" .. tagName
-
-                                -- If we already have some keywords, add a comma
-                                if newKeywords ~= "" then
-                                    newKeywords = newKeywords .. ", " .. prefixedTagName
-                                else
-                                    newKeywords = prefixedTagName
-                                end
+            -- 4) Process each photo in its own withWriteAccessDo
+            for _, entry in ipairs(results) do
+                local p = entry.image_path
+                local photo = pathToPhoto[p]
+                if photo and entry.tags then
+                    -- One photo per transaction
+                    catalog:withWriteAccessDo("Apply AI Keywords to single photo", function()
+                        -- 1) Remove existing lds_ keywords
+                        local existingKeywords = photo:getRawMetadata("keywords") or {}
+                        for _, kwObj in ipairs(existingKeywords) do
+                            local kwName = kwObj:getName()
+                            if string.find(kwName, "^lds_") then
+                                photo:removeKeyword(kwObj)
                             end
                         end
 
-                        -- 3) Write the updated keyword string back to the photo
-                        photo:setRawMetadata("keywordTags", newKeywords)
-                    end
+                        -- 2) Add new lds_ keywords
+                        for _, tagData in ipairs(entry.tags) do
+                            local tagName = tagData[1]
+                            local confidence = tagData[2]
+                            if confidence > 0.20 then
+                                local prefixedTagName = "lds_" .. tagName
+                                -- find or create the keyword object
+                                local kw = getOrCreateKeyword(catalog, prefixedTagName)
+                                photo:addKeyword(kw)
+                            end
+                        end
+                    end)
                 end
-            end)
+            end
 
-            LrDialogs.message("Batch AI Auto-Tagging Complete", "Tags have been applied to the selected photos.", "info")
+            LrDialogs.message("Batch AI Auto-Tagging Complete", "Keywords have been applied to the selected photos.", "info")
         end)
     end
 end

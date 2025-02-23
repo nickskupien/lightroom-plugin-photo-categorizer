@@ -22,7 +22,7 @@ function TaggingService.getTagsForImages(jsonFile)
         scriptPath,
         jsonFile,
         10,     -- top_k
-        0.21,   -- threshold
+        0.20,   -- threshold
         outputFile
     )
 
