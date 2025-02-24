@@ -42,7 +42,7 @@ function TaggingService.getTagsForImages(jsonFile)
         return {}
     end
 
-    LrDialogs.message("Result", result)
+    -- LrDialogs.message("Result", result)
 
 
     -- 6) Decode the JSON into a Lua table
