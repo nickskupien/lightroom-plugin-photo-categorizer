@@ -5,7 +5,7 @@ local LrFileUtils     = import("LrFileUtils")
 local LrPathUtils     = import("LrPathUtils")
 local LrStringUtils   = import("LrStringUtils")
 local json            = require("json")
-local TaggingService  = require("TaggingService")
+local TaggingService  = require("TaggingServiceClip")
 
 -- Helper: manually find or create a keyword by name
 local function getOrCreateKeyword(catalog, name)
@@ -90,15 +90,10 @@ local function runBatchTagging()
                         end
 
                         -- 2) Add new lds_ keywords
-                        for _, tagData in ipairs(entry.tags) do
-                            local tagName = tagData[1]
-                            local confidence = tagData[2]
-                            if confidence > 0.20 then
-                                local prefixedTagName = "lds_" .. tagName
-                                -- find or create the keyword object
-                                local kw = getOrCreateKeyword(catalog, prefixedTagName)
-                                photo:addKeyword(kw)
-                            end
+                        for _, tagName in ipairs(entry.tags) do
+                            local prefixedTagName = "lds_" .. tagName
+                            local kw = getOrCreateKeyword(catalog, prefixedTagName)
+                            photo:addKeyword(kw)
                         end
                     end)
                 end
